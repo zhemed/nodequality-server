@@ -1,0 +1,11 @@
+# 来源说明
+
+本项目参考了 [LloydAsp/NodeQuality](https://github.com/LloydAsp/NodeQuality)（AGPL-3.0）。
+
+具体边界：
+
+1. **测试脚本**（`NodeQuality.sh`、`part/`）来自上述仓库及其上游的
+   [xykt](https://github.com/xykt) 系列脚本，遵循其原始许可（AGPL-3.0）。
+2. **本仓库的后端代码**为独立实现，未使用上游的网站代码——上游网站的源码从未公开。
+   实现时参考的是其公开可见的 HTTP 接口形状与页面行为。
+3. 接口字段名、zip 内文件命名等契约信息，用于保证新旧客户端都能正常对接。

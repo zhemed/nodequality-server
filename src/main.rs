@@ -15,8 +15,8 @@ use std::{
 use axum::{
     Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
+    extract::{DefaultBodyLimit, OriginalUri, Path, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -39,6 +39,7 @@ const TOKEN_LEN: usize = 32;
 struct App {
     data_dir: PathBuf,
     base_url: String,
+    index_html: PathBuf,
 }
 
 #[derive(Serialize)]
@@ -198,6 +199,23 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+/// 前端路由回落：只有“看起来不是静态资源”的路径才交回 index.html。
+/// 否则缺失的 js/css 会拿到一段 HTML，浏览器解析失败时报错更难排查。
+async fn spa_fallback(State(app): State<Arc<App>>, OriginalUri(uri): OriginalUri) -> Response {
+    let last = uri.path().rsplit('/').next().unwrap_or("");
+    if last.contains('.') {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    match tokio::fs::read(&app.index_html).await {
+        Ok(bytes) => (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -219,20 +237,19 @@ async fn main() -> anyhow::Result<()> {
     let app_state = Arc::new(App {
         data_dir: data_dir.clone(),
         base_url: base_url.clone(),
+        index_html: web_dir.join("index.html"),
     });
-
-    // 前端构建产物：不存在时返回一个提示页，方便先跑后端
-    let index = web_dir.join("index.html");
-    let static_svc = ServeDir::new(&web_dir).fallback(ServeFile::new(index));
 
     let router = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/v1/record", post(upload))
         .route("/api/v1/record/{token}", get(get_record))
+        .nest_service("/assets", ServeDir::new(web_dir.join("assets")))
+        .route_service("/favicon.svg", ServeFile::new(web_dir.join("favicon.svg")))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .fallback_service(static_svc)
+        .fallback(spa_fallback)
         .with_state(app_state);
 
     tracing::info!(%addr, data_dir = %data_dir.display(), web_dir = %web_dir.display(), base_url = %base_url, "服务启动");
